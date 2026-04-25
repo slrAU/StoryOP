@@ -24,4 +24,4 @@ For those of you that are already familiar with StoryQ and just want to jump rig
 4. Compose stories inside ordinary `[Test]` methods using the
    fluent chain, ending every chain with `.Execute`.
 
-5. See the use-case examples in `StoryOP.BankAccount.Tests.pas` unit if you want to see how this all works... but seriously, flick through the manual if you want to know more, or send me a .
+5. See the use-case examples in `StoryOP.BankAccount.Tests.pas` unit if you want to see how this all works... but seriously, flick through the manual if you want to know more, or send me a message via the discussions page.
