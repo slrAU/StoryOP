@@ -14,7 +14,7 @@ Comprehensive documentation can be found in the StoryOP.Manual.md file.  I may g
 
 For those of you that are already familiar with StoryQ and just want to jump right in,
 
-1. Add `StoryOP.pas` to your test project, or add it's location to the search path.
+1. Add `StoryOP.pas` to your test project, or add it's location to your test project's search path.
 
 2. Add `StoryOP` to the `uses` clause of your test unit.
 
