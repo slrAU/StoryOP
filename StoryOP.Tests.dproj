@@ -71,7 +71,7 @@
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="StoryOP.pas"/>
-        <DCCReference Include="StoryOP.BankAccount.Tests.pas"/>
+        <DCCReference Include="StoryOP.UnitTests.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

@@ -25,7 +25,7 @@ uses
   DunitX.loggers.XML.NUnit,
   {$ENDIF}
   StoryOP in 'StoryOP.pas',
-  StoryOP.BankAccount.Tests in 'StoryOP.BankAccount.Tests.pas';
+  StoryOP.UnitTests in 'StoryOP.UnitTests.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}
@@ -42,7 +42,7 @@ begin
   TDUnitX.Run;
 {$ELSE}
   try
-    TDUnitX.RegisterTestFixture(TBankAccountTests);
+//    TDUnitX.RegisterTestFixture(TBankAccountTests);
 
     Runner := TDUnitX.CreateRunner;
     Runner.UseRTTI := True;

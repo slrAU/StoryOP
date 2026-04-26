@@ -1,4 +1,4 @@
-# StoryOP — Story for Object Pascal
+# StoryOP — Story Object Pascal
 
 A StoryQ-inspired BDD wrapper for DUnitX.
 Provides a fluent `Story > Scenario > Given / When / Then` DSL with
@@ -15,18 +15,20 @@ definition styles without enforcing any single development methodology.
 4. [RTTI and Method Visibility — Read This First](#rtti-and-method-visibility)
 5. [Narrative Patterns](#narrative-patterns)
 6. [Step Naming Conventions](#step-naming-conventions)
-7. [Fluent API Reference](#fluent-api-reference)
-8. [Step Overloads](#step-overloads)
-9. [Pre-built Step Variables](#pre-built-step-variables)
-10. [Multi-Scenario Stories](#multi-scenario-stories)
-11. [State Management Between Scenarios](#state-management-between-scenarios)
-12. [Failure Behaviour](#failure-behaviour)
-13. [Parameterised Scenarios with TestCase](#parameterised-scenarios-with-testcase)
-14. [Narrative Report Output](#narrative-report-output)
-15. [TestInsight and DUnitX Runner Integration](#testinsight-and-dunitx-runner-integration)
-16. [Memory Management](#memory-management)
-17. [Known Limits and Nuances](#known-limits-and-nuances)
-18. [Compatibility](#compatibility)
+7. [Step Method Types — TStepMethod Family](#step-method-types)
+8. [Fluent API Reference](#fluent-api-reference)
+9. [Step Overloads](#step-overloads)
+10. [TStepFactory — Pre-built Step Variables](#tstepfactory)
+11. [Parameterised Steps — Generics](#parameterised-steps)
+12. [Multi-Scenario Stories](#multi-scenario-stories)
+13. [State Management Between Scenarios](#state-management-between-scenarios)
+14. [Failure Behaviour](#failure-behaviour)
+15. [Parameterised Scenarios with TestCase](#parameterised-scenarios-with-testcase)
+16. [Narrative Report Output](#narrative-report-output)
+17. [TestInsight and DUnitX Runner Integration](#testinsight-and-dunitx-runner-integration)
+18. [Memory Management](#memory-management)
+19. [Known Limits and Nuances](#known-limits-and-nuances)
+20. [Compatibility](#compatibility)
 
 ---
 
@@ -36,46 +38,50 @@ StoryOP wraps DUnitX with a story-driven DSL inspired by StoryQ. It
 is not a replacement for DUnitX — it is a thin layer on top of it.
 Your test fixtures are still ordinary `[TestFixture]` classes, your
 test methods are still ordinary `[Test]` methods, and all DUnitX
-tooling (TestInsight, console and GUI runners, etc.) works without
+tooling (TestInsight, console runner, XML logger) works without
 modification.
 
 The DSL adds:
 
-- A fluent story/scenario/step chain that produces a readable
-  plain-text narrative report alongside the normal DUnitX output
+- A fluent story/scenario/step chain producing a readable plain-text
+  narrative report alongside normal DUnitX output
 - Automatic step description derivation from method names via RTTI,
-  supporting both CamelCase and underscore naming conventions
-- Multiple narrative header styles that can be freely mixed, or bypassed using a simple string
-- Halt-on-failure behaviour that marks subsequent steps as SKIPPED
-  when a test step fails
+  supporting CamelCase, underscore, and mixed naming conventions
+- Generic step method types supporting zero to four typed parameters,
+  with parameter values automatically appended to the narrative
+- Multiple narrative header styles (BDD, FDD, declarative, plain
+  string) that can be freely mixed in any order
+- Halt-on-failure behaviour that marks subsequent steps SKIPPED when
+  a Given or When step fails
 
 ---
 
 ## Files
 
-| File                            | Purpose                                   |
-| ------------------------------- | ----------------------------------------- |
-| `StoryOP.pas`                   | The entire framework — one unit           |
-| `StoryOP.BankAccount.Tests.pas` | Working example covering all DSL features |
-| `StoryOP.Tests.dpr`             | Test runner program                       |
-| `StoryOP.Tests.dproj`           | Delphi 12 Athens project file             |
+| File                            | Purpose                                                     |
+| ------------------------------- | ----------------------------------------------------------- |
+| `StoryOP.pas`                   | The entire framework — one unit                             |
+| `StoryOP.Tests.pas`             | Comprehensive self-test suite (tests StoryOP using StoryOP) |
+| `StoryOP.BankAccount.Tests.pas` | Domain example covering all DSL features                    |
+| `StoryOP.Tests.dpr`             | Console test runner program                                 |
+| `StoryOP.Tests.dproj`           | Delphi 12 Athens project file                               |
+| `StoryOP.groupproj`             | Project group — open this in the IDE                        |
 
 ---
 
 ## Getting Started
 
-1. Open the StoryOP project in the Delphi IDE.
+1. Open `StoryOP.groupproj` in Delphi 12 Athens.
 2. Ensure DUnitX is on your library path
-   (typically `$(BDS)\source\DUnitX` — already in the `.dproj`
-   search path).
-3. Build and run.
+   (`$(BDS)\source\DUnitX` — already in the `.dproj` search path).
+3. Build and run — the console shows the BDD narrative report
+   followed by the standard DUnitX pass/fail summary.
 
 To use StoryOP in your own project:
 
-1. Add `StoryOP.pas` to your test project, or add it's location to the search path.
+1. Add `StoryOP.pas` to your project.
 2. Add `StoryOP` to the `uses` clause of your test unit.
-3. Declare step procedures on your fixture class (see
-   [RTTI and Method Visibility](#rtti-and-method-visibility) below).
+3. Declare step procedures as `public` methods of your fixture class.
 4. Compose stories inside ordinary `[Test]` methods using the
    fluent chain, ending every chain with `.Execute`.
 
@@ -84,58 +90,51 @@ To use StoryOP in your own project:
 ## RTTI and Method Visibility
 
 StoryOP derives step descriptions from your procedure names at
-runtime using Delphi's RTTI system. 
+runtime using RTTI. It obtains a `TMethod` record from the step
+procedure reference, then walks the RTTI method table of your fixture
+class to find the method whose `CodeAddress` matches `TMethod.Code`.
 
-This mechanism works correctly and reliably, but it has one
-critical constraint: **Delphi only generates RTTI metadata for
-methods that are `public` or `published` by default.**
+This works correctly and reliably, but with one critical constraint:
+**Delphi only generates RTTI metadata for methods that are `public`
+or `published` by default.**
 
 ### What this means in practice
 
-Step procedures declared as `private` or `protected` will not
-appear in the RTTI method table. When StoryOP cannot find a
-matching method, it falls back to the description `(unnamed step)`
-in the narrative report. The test will still run correctly —
-only the narrative text is affected.
+Step procedures declared as `private` or `protected` will not appear
+in the RTTI method table. StoryOP falls back to `(unnamed step)` in
+the narrative report. The test still runs correctly — only the
+narrative text is affected.
 
 ### The recommended solution
 
-Declare all step procedures as `public`. For test fixture classes
-this carries no practical risk — test code does not have the same
-encapsulation concerns as production domain objects, and no
-production system will accidentally depend on a test step procedure.
+Declare all step procedures as `public`. Test fixture classes do not
+have the same encapsulation concerns as production domain objects,
+and no production system will accidentally depend on a step procedure.
 
 ```pascal
 [TestFixture]
 TMyTests = class
-public                          // <-- step procedures here
+public
   procedure AccountIsInCredit;
   procedure CustomerRequestsAWithdrawalOf20;
   procedure AccountBalanceShouldBe80;
 
   [Setup]    procedure Setup;
   [TearDown] procedure TearDown;
-
-  [Test]     procedure Test_WithdrawalFromAccountInCredit;
+  [Test]     procedure Test_Withdrawal;
 end;
 ```
 
 ### If you prefer private or protected steps
 
-Add the following compiler directive to the top of your test unit,
-immediately after the `interface` keyword or before the type
-declaration:
+Add the following directive to the top of your test unit:
 
 ```pascal
 {$RTTI EXPLICIT METHODS([vcPrivate, vcProtected, vcPublic, vcPublished])}
 ```
 
 This instructs the compiler to generate full RTTI metadata for all
-method visibilities in that unit. It has no effect on other units
-and no runtime cost beyond the additional metadata.
-
-The example test unit `StoryOP.BankAccount.Tests.pas` includes this
-directive so you can see where to place it.
+method visibilities in that unit only.
 
 ### Summary
 
@@ -218,9 +217,50 @@ All-uppercase tokens are treated as acronyms and preserved.
 | `Account_is_in_credit`     | `account is in credit`        |
 | `CustomerWithdrawsFromATM` | `customer withdraws from ATM` |
 | `RequestWithdrawalOf20`    | `request withdrawal of 20`    |
+| `ATMWithdrawal`            | `ATM withdrawal`              |
 | `Account_IsInCredit`       | `account is in credit`        |
 
 Both conventions can be freely mixed within the same scenario.
+
+---
+
+## Step Method Types
+
+StoryOP defines a family of `TStepMethod` types using generic
+specialisation. Different type-parameter counts produce distinct
+types, just as method overloads are distinct — no numeric suffixes
+are needed.
+
+```pascal
+TStepMethod                          // procedure of object — no parameters
+TStepMethod<T>                       // one typed parameter
+TStepMethod<T1, T2>                  // two typed parameters
+TStepMethod<T1, T2, T3>              // three typed parameters
+TStepMethod<T1, T2, T3, T4>         // four typed parameters
+```
+
+Step procedures must match one of these signatures:
+
+```pascal
+// Zero parameters
+procedure AccountIsInCredit;
+
+// One parameter
+procedure CustomerWithdraws(const AAmount: Integer);
+
+// Two parameters
+procedure AccountStartsWithBalanceAndLimit(const ABalance: Integer;
+                                           const ALimit: Integer);
+
+// Three parameters
+procedure SetNameAgeScore(const AName: string;
+                          const AAge: Integer;
+                          const AScore: Double);
+
+// Four parameters
+procedure TransferAndVerify(const AFrom: Integer; const ATo: Integer;
+                            const AAmount: Integer; const AExpected: Integer);
+```
 
 ---
 
@@ -256,14 +296,14 @@ function WithScenario(const ATitle: string): TBDDScenario;
 
 ### TBDDScenario step methods
 
-Each has three overloads — see [Step Overloads](#step-overloads).
+Each has multiple overloads — see [Step Overloads](#step-overloads).
 
 | Method                 | Notes                                               |
 | ---------------------- | --------------------------------------------------- |
-| `.Given(step)`         | Precondition                                        |
-| `.When(step)`          | Action                                              |
-| `.Then_(step)`         | Outcome (`Then` is a Delphi reserved word)          |
-| `.AndAlso(step)`       | Continuation; inherits G/W/T context for halt logic |
+| `.Given(...)`          | Precondition                                        |
+| `.When(...)`           | Action                                              |
+| `.Then_(...)`          | Outcome (`Then` is a Delphi reserved word)          |
+| `.AndAlso(...)`        | Continuation; inherits G/W/T context for halt logic |
 | `.WithScenario(title)` | Adds a sibling scenario to the same story           |
 | `.Execute`             | Runs steps, writes report, frees story              |
 
@@ -273,13 +313,9 @@ Each has three overloads — see [Step Overloads](#step-overloads).
 
 ## Step Overloads
 
-Every step method (`Given`, `When`, `Then_`, `AndAlso`) accepts
-one of three forms.
+Every step method accepts one of four forms.
 
-### 1. TStepMethod — primary path (recommended)
-
-Pass a method reference directly by name. The description is
-derived automatically from the method name via RTTI.
+### 1. Zero-parameter TStepMethod (primary path)
 
 ```pascal
 .Given(AccountIsInCredit)
@@ -287,25 +323,38 @@ derived automatically from the method name via RTTI.
 .Then_(AccountBalanceShouldBe80)
 ```
 
-Requirements:
+### 2. Parameterised TStepMethod (generic path)
 
-- The procedure must be a method of the fixture class
-  (`procedure of object`)
-- The method must be `public` or `published`, or the
-  `{$RTTI EXPLICIT METHODS(...)}` directive must be present
-  (see [RTTI and Method Visibility](#rtti-and-method-visibility))
+Specify the type parameters explicitly in angle brackets:
 
-### 2. TProc — anonymous method path
+```pascal
+.Given<Integer>(AccountIsOpenedWithBalance, 100)
+.When<Integer>(CustomerWithdraws, 20)
+.Then_<Integer>(BalanceShouldBe, 80)
 
-Pass an inline anonymous method with a mandatory label string.
-RTTI is bypassed; the label is used directly as the description.
+.Given<Integer,Integer>(AccountStartsWithBalanceAndLimit, 500, 1000)
+
+.Given<string,Integer,Double>(SetNameAgeScore, 'Alice', 25, 90.0)
+
+.Given<Integer,Integer,Integer,Integer>(TransferAndVerify, 200, 50, 75, 125)
+```
+
+Parameter values are appended to the step description automatically:
+
+```
+Given account is opened with balance [100]
+When  customer withdraws [20]
+Then  balance should be [80]
+```
+
+### 3. Anonymous method (TProc) — label required
+
+Use for inline anonymous methods. The label is mandatory since there
+is no method name for RTTI to find.
 
 ```pascal
 .Given(procedure begin FAccount.Deposit(100) end,
        'account starts with a balance of 100')
-
-.When(procedure begin FAccount.Withdraw(20) end,
-      'a withdrawal of 20 is requested')
 
 .Then_(procedure
        begin
@@ -314,69 +363,158 @@ RTTI is bypassed; the label is used directly as the description.
        'the balance should be 80')
 ```
 
-The label parameter is **not optional** for anonymous methods, as there is no method name for RTTI to find.
+### 4. Pre-built TBDDStep
 
-Anonymous methods capture variables from their enclosing scope,
-making them useful for parameterised scenarios (see
-[Parameterised Scenarios](#parameterised-scenarios-with-testcase)).
-
-### 3. TBDDStep — pre-built step
-
-Build a step explicitly using the `Step()` factory. The description
-is captured once at construction and stored permanently, making it
-safe to assign to a variable and reuse.
+See [TStepFactory](#tstepfactory).
 
 ```pascal
-// TStepMethod factory — RTTI runs here, name stored permanently
 var S: TBDDStep;
-S := Step(AccountIsInCredit);
-
-// TProc factory — label required
-var S: TBDDStep;
-S := Step(procedure begin ... end, 'my description');
-
-// Use in chain — description already stored, no RTTI needed here
-.Given(S)
+S := TStepFactory.Create<Integer>(BalanceShouldBe, 80);
+...
+.Then_(S)
 ```
-
-See [Pre-built Step Variables](#pre-built-step-variables).
 
 ---
 
-## Pre-built Step Variables
+## TStepFactory
 
-The `Step()` factory captures the description at the point of
-construction. This is the correct pattern when you want to assign
-a step to a variable before using it — passing a method reference
-directly to a variable without using `Step()` would lose the name.
+`TStepFactory` is a static class that builds self-describing
+`TBDDStep` instances. The description is captured once at
+construction via RTTI and stored permanently on the step object,
+making it safe to assign to a variable and use later.
+
+### Why TStepFactory instead of a free function?
+
+Delphi does not permit type parameters on global (free) functions.
+Generic factory methods must be on a class. `TStepFactory` provides
+this as static class methods. Zero-parameter and anonymous-method
+steps are also available as the free functions `Step()` for
+convenience.
+
+### TStepFactory.Create overloads
+
+```pascal
+// Zero-parameter — also available as Step(AMethod)
+S := TStepFactory.Create(AccountIsInCredit);
+
+// One-parameter
+S := TStepFactory.Create<Integer>(BalanceShouldBe, 80);
+S := TStepFactory.Create<string>(AccountHolderIsNamed, 'Alice');
+
+// Two-parameter
+S := TStepFactory.Create<Integer,Integer>(AccountStartsWithBalanceAndLimit, 500, 1000);
+
+// Three-parameter
+S := TStepFactory.Create<string,Integer,Double>(SetNameAgeScore, 'Alice', 25, 90.0);
+
+// Four-parameter
+S := TStepFactory.Create<Integer,Integer,Integer,Integer>(TransferAndVerify, 200, 50, 75, 125);
+
+// Anonymous method — also available as Step(AProc, ALabel)
+S := TStepFactory.Create(procedure begin ... end, 'my description');
+```
+
+### Usage pattern for pre-built steps
 
 ```pascal
 var
-  GivenInCredit : TBDDStep;
-  WhenWithdraw  : TBDDStep;
-  ThenBalance80 : TBDDStep;
+  GivenStep : TBDDStep;
+  WhenStep  : TBDDStep;
+  ThenStep  : TBDDStep;
 begin
-  GivenInCredit := Step(AccountIsInCredit);           // name captured here
-  WhenWithdraw  := Step(CustomerRequestsAWithdrawalOf20);
-  ThenBalance80 := Step(AccountBalanceShouldBe80);
+  GivenStep := TStepFactory.Create<Integer>(AccountIsOpenedWithBalance, 100);
+  WhenStep  := TStepFactory.Create<Integer>(CustomerWithdraws, 20);
+  ThenStep  := TStepFactory.Create<Integer>(BalanceShouldBe, 80);
 
   Story('Account Holder Withdraws Cash')
     .WithScenario('Using pre-built step variables')
-      .Given(GivenInCredit)                           // description already stored
-      .When(WhenWithdraw)
-      .Then_(ThenBalance80)
+      .Given(GivenStep)
+      .When(WhenStep)
+      .Then_(ThenStep)
     .Execute;
-  // Do NOT free GivenInCredit, WhenWithdraw, or ThenBalance80 —
+  // Do NOT free GivenStep, WhenStep, or ThenStep —
   // Execute frees all steps as part of freeing the story.
 end;
 ```
+
+### Module-level Step() convenience functions
+
+Two zero-type-parameter overloads are available as free functions:
+
+```pascal
+// Zero-parameter method reference
+S := Step(AccountIsInCredit);
+
+// Anonymous method with label
+S := Step(procedure begin ... end, 'my description');
+```
+
+---
+
+## Parameterised Steps — Generics
+
+### Declaring parameterised step procedures
+
+```pascal
+[TestFixture]
+TMyTests = class
+public
+  // One parameter
+  procedure AccountIsOpenedWithBalance(const ABalance: Integer);
+
+  // Two parameters
+  procedure TransferAmount(const AFrom: Integer; const ATo: Integer);
+
+  // Three parameters
+  procedure SetCredentials(const AUser: string;
+                           const APin: Integer;
+                           const AExpiry: string);
+
+  // Four parameters
+  procedure ConfigureAccount(const AName: string;
+                             const ABalance: Integer;
+                             const ALimit: Integer;
+                             const AActive: Boolean);
+end;
+```
+
+### Calling parameterised steps in a chain
+
+```pascal
+Story('Account Holder Withdraws Cash')
+  .WithScenario('Parameterised withdrawal')
+    .Given<Integer>(AccountIsOpenedWithBalance, 100)
+    .When<Integer>(CustomerWithdraws, 20)
+    .Then_<Integer>(BalanceShouldBe, 80)
+  .Execute;
+```
+
+### Parameter representation in narrative
+
+Parameter values are appended to the method name in square brackets,
+using `TValue.ToString` for rendering:
+
+| Type     | Value         | Rendered as                 |
+| -------- | ------------- | --------------------------- |
+| Integer  | `42`          | `[42]`                      |
+| string   | `'Alice'`     | `[Alice]`                   |
+| Boolean  | `True`        | `[True]`                    |
+| Double   | `3.14`        | `[3.14]` (platform default) |
+| Multiple | `20, 'Alice'` | `[20, Alice]`               |
+
+### Type support
+
+Any type that `TValue` can represent is supported as a step parameter,
+including integers, strings, booleans, floating-point types,
+enumerations, and records. Objects can be passed but render as the
+class name in the narrative.
 
 ---
 
 ## Multi-Scenario Stories
 
-Multiple scenarios can be composed in a single fluent chain.
-Call `.Execute` once on the last scenario in the chain.
+Multiple scenarios can be composed in a single fluent chain. Call
+`.Execute` once on the last scenario.
 
 ```pascal
 Story('Account Holder Withdraws Cash')
@@ -385,35 +523,35 @@ Story('Account Holder Withdraws Cash')
   .SoThat('I have spending money')
 
   .WithScenario('Account in credit, no overdraft limit')
-    .Given(AccountIsInCredit)
-    .When(CustomerRequestsAWithdrawalOf20)
-    .Then_(AccountBalanceShouldBe80)
+    .Given<Integer>(AccountIsOpenedWithBalance, 100)
+    .When<Integer>(CustomerWithdraws, 20)
+    .Then_<Integer>(BalanceShouldBe, 80)
 
   .WithScenario('Account has insufficient funds')
-    .Given(ResetAccount)               // see State Management below
-    .AndAlso(AccountHasABalanceOf10)
-    .When(CustomerRequestsAWithdrawalOf20)
+    .Given(ResetAccount)
+    .AndAlso<Integer>(AccountIsOpenedWithBalance, 10)
+    .When<Integer>(CustomerWithdraws, 20)
     .Then_(WithdrawalShouldBeDeclined)
 
   .Execute;
 ```
 
-The narrative report will include all scenarios under the single
-story header. DUnitX records the enclosing `[Test]` method as one
-test — pass or fail.
+The narrative report includes all scenarios under the single story
+header. DUnitX records the enclosing `[Test]` method as one test.
 
 ---
 
 ## State Management Between Scenarios
 
-DUnitX calls `[Setup]` and `[TearDown]` around each `[Test]`
-method, but within a single `Execute` call all scenarios share the
-same fixture instance. If the first scenario modifies state (e.g.
-deposits money into an account), that state carries over into the
-second scenario unless you explicitly reset it.
+**Important for multi-scenario stories.**
 
-The recommended pattern is to include a reset step as the first
-`Given` of any scenario that requires a clean state:
+DUnitX calls `[Setup]` and `[TearDown]` around each `[Test]` method,
+but within a single `Execute` call all scenarios share the same
+fixture instance. State from the first scenario carries into the
+second unless explicitly reset.
+
+The recommended pattern is a reset step as the first `Given` of any
+scenario that requires clean state:
 
 ```pascal
 procedure TMyTests.ResetAccount;
@@ -422,16 +560,15 @@ begin
   FAccount := TBankAccount.Create;
 end;
 
-// In the scenario chain:
-.WithScenario('Account has insufficient funds')
-  .Given(ResetAccount)             // clean slate
-  .AndAlso(AccountHasABalanceOf10)
+// In the chain:
+.WithScenario('Second scenario')
+  .Given(ResetAccount)
+  .AndAlso<Integer>(AccountIsOpenedWithBalance, 10)
   ...
 ```
 
-Alternatively, split scenarios that require independent state into
-separate `[Test]` methods, each of which gets its own `[Setup]`
-call automatically.
+Alternatively, split scenarios requiring independent state into
+separate `[Test]` methods, each getting its own `[Setup]` call.
 
 ---
 
@@ -440,25 +577,33 @@ call automatically.
 ### Given and When failures — halt and skip
 
 If a `Given` or `When` step (including `AndAlso` continuations of
-either) raises an exception, the scenario is halted immediately.
-All remaining steps in that scenario are marked `[SKIPPED]` in the
-report and are not executed.
+either) raises an exception, the scenario halts immediately. All
+remaining steps in that scenario are marked `[SKIPPED]`.
 
 ### Then failures — record and continue
 
 If a `Then` step raises an exception, the failure is recorded but
 the scenario continues. All subsequent `Then` steps still run.
+This includes `AndAlso` continuations of `Then`.
+
+### Halt behaviour summary
+
+| Failing step kind | Effect on remaining steps                   |
+| ----------------- | ------------------------------------------- |
+| `Given`           | All subsequent → **SKIPPED**                |
+| `When`            | All subsequent → **SKIPPED**                |
+| `And (Given)`     | All subsequent → **SKIPPED**                |
+| `And (When)`      | All subsequent → **SKIPPED**                |
+| `Then`            | Failure recorded; remaining steps still run |
+| `And (Then)`      | Failure recorded; remaining steps still run |
 
 ### End-of-Execute failure aggregation
 
-After all scenarios have run, if any steps failed, `Execute` calls
-`Assert.Fail` with a summary of all failures. DUnitX records the
-enclosing `[Test]` method as failed with the combined message.
+After all scenarios complete, if any steps failed, `Execute` calls
+`Assert.Fail` with a combined message. DUnitX records the enclosing
+`[Test]` as failed.
 
 ### Verifying failure behaviour in tests
-
-To write a test that asserts a scenario correctly fails, wrap the
-`Execute` call in `Assert.WillRaise`:
 
 ```pascal
 Assert.WillRaise(
@@ -479,15 +624,9 @@ Assert.WillRaise(
 
 ## Parameterised Scenarios with TestCase
 
-StoryOP is compatible with DUnitX `[TestCase]` attributes.
-DUnitX calls the test method once per `[TestCase]`, each time
-passing different parameters. Each invocation builds and executes
-its own independent story object graph.
-
-Because `[TestCase]` parameters arrive as method arguments, they
-cannot be passed to `TStepMethod` procedures (which take no
-parameters). Use anonymous method captures instead, and supply
-explicit label strings derived from the parameter values:
+StoryOP is compatible with DUnitX `[TestCase]` attributes. Because
+`[TestCase]` parameters arrive as method arguments, use the anonymous
+method (`TProc`) overload with explicit labels:
 
 ```pascal
 [Test]
@@ -515,21 +654,16 @@ begin
 end;
 ```
 
-Always derive the scenario title dynamically from the parameters
-so that the narrative report is meaningful for each invocation.
-
-TestInsight displays parameterised cases as separate rows using
-the string supplied in the `[TestCase]` attribute.
+Always derive the scenario title from the parameters so the narrative
+is meaningful for each invocation. TestInsight displays parameterised
+cases as separate rows using the `[TestCase]` string.
 
 ---
 
 ## Narrative Report Output
 
-The report is emitted via `TDUnitX.CurrentRunner.Log` at
-`TLogLevel.Information`, which means it appears in all registered
-DUnitX loggers — console, NUnit XML, and TestInsight.
-
-Example output:
+Emitted via `TDUnitX.CurrentRunner.Log` at `TLogLevel.Information`,
+appearing in all registered DUnitX loggers.
 
 ```
 Story: Account Holder Withdraws Cash
@@ -537,16 +671,16 @@ Story: Account Holder Withdraws Cash
   I want to withdraw cash from the ATM
   So that I have spending money
 
-  Scenario: Account in credit, no overdraft limit
-    Given account is in credit                           [PASSED]
-    When  customer requests a withdrawal of 20           [PASSED]
-    Then  account balance should be 80                   [PASSED]
+  Scenario: Parameterised withdrawal
+    Given account is opened with balance [100]      [PASSED]
+    When  customer withdraws [20]                   [PASSED]
+    Then  balance should be [80]                    [PASSED]
 
   Scenario: Account has insufficient funds
-    Given reset account                                  [PASSED]
-    And (Given) account has a balance of 10              [PASSED]
-    When  customer requests a withdrawal of 20           [PASSED]
-    Then  withdrawal should be declined                  [PASSED]
+    Given reset account                             [PASSED]
+    And (Given) account is opened with balance [10] [PASSED]
+    When  customer withdraws [20]                   [PASSED]
+    Then  withdrawal should be declined             [PASSED]
 ```
 
 Step outcome markers:
@@ -554,7 +688,7 @@ Step outcome markers:
 | Marker      | Meaning                                                  |
 | ----------- | -------------------------------------------------------- |
 | `[PASSED]`  | Step executed without raising an exception               |
-| `[FAILED]`  | Step raised an exception; message shown on next line     |
+| `[FAILED]`  | Step raised an exception; error shown on next line       |
 | `[SKIPPED]` | Step not executed due to a prior Given/When failure      |
 | `[NOT RUN]` | Step was never attempted (should not appear in practice) |
 
@@ -563,127 +697,117 @@ Step outcome markers:
 ## TestInsight and DUnitX Runner Integration
 
 StoryOP integrates transparently with all DUnitX tooling because
-it is a pure wrapper — your test methods are still ordinary
-`[Test]` methods on `[TestFixture]` classes.
+your test methods are still ordinary `[Test]` methods on
+`[TestFixture]` classes.
 
-**TestInsight** discovers and runs StoryOP tests without any
-configuration. The narrative report is emitted to the TestInsight
-log output. Because TestInsight truncates long log output in its
-tooltip display, the narrative is best viewed in the full log panel
-rather than the inline tooltip.
+**TestInsight** discovers and runs StoryOP tests without configuration.
+Narrative output appears in the TestInsight log. Because TestInsight
+truncates long log output in tooltips, view the narrative in the full
+log panel rather than the inline tooltip.
 
-**Console runner** — narrative output appears interleaved with the
-standard DUnitX pass/fail output. If verbose output is not
-appearing, ensure your DPR passes `True` to
-`TDUnitXConsoleLogger.Create` to enable detailed logging.
+**Console runner** — narrative output appears interleaved with DUnitX
+pass/fail output. Pass `True` to `TDUnitXConsoleLogger.Create` to
+enable detailed logging.
 
-**NUnit XML output** — narrative lines are included as information
-log entries in the XML file, visible in CI pipeline log viewers.
+**NUnit XML** — narrative lines appear as information log entries in
+the XML file, visible in CI pipeline log viewers.
 
-**Failure reporting** — because StoryOP aggregates all step
-failures into a single `Assert.Fail` call at the end of `Execute`,
-DUnitX and TestInsight record each BDD test method as one test
-with one combined failure message, rather than individual failures
-per step. This is intentional — a scenario is one logical test.
+**Failure reporting** — StoryOP aggregates all step failures into a
+single `Assert.Fail` call at the end of `Execute`. DUnitX and
+TestInsight record the BDD test method as one test with one combined
+failure message.
 
 ---
 
 ## Memory Management
 
-StoryOP manages all of its own objects. You must not free any
-StoryOP objects manually.
+StoryOP manages all of its own objects. Do not free any StoryOP
+objects manually.
 
-- `Story()` creates a `TBDDStory` which owns all `TBDDScenario`
-  objects added via `.WithScenario()`
+- `Story()` creates a `TBDDStory` which owns all `TBDDScenario` objects
 - Each `TBDDScenario` owns the `TBDDStep` objects added to it
-- `Execute` frees the entire object graph by calling `FStory.Free`
-  after the report is written and any failure is raised
-
-This means:
-
-- Do not call `Free` on any `TBDDStory`, `TBDDScenario`, or
-  `TBDDStep` object
-- Pre-built `TBDDStep` variables created via `Step()` are also
-  freed by `Execute` once they have been added to a scenario —
-  do not free them manually after passing them to a step method
-- If `Execute` is never called (e.g. due to an exception during
-  chain construction), the story object will leak — always ensure
-  `Execute` is reached
+- `Execute` frees the entire graph via `FStory.Free`
+- Pre-built `TBDDStep` variables created via `TStepFactory.Create`
+  are also freed by `Execute` once passed to a scenario — do not
+  free them manually after passing them to a step method
+- If `Execute` is never called, the story object will leak
 
 ---
 
 ## Known Limits and Nuances
 
-### `Then` is a Delphi reserved word
+### `Then_` naming
 
-The outcome step method is named `Then_` (with a trailing
-underscore) because `Then` is a reserved word in Delphi. This is
-the one unavoidable departure from a pure StoryQ-style API.
+The outcome step method is named `Then_` because `Then` is a reserved
+word in Delphi. This is the one unavoidable departure from pure
+StoryQ-style naming.
+
+### Generic free functions not supported by Delphi
+
+Delphi does not permit type parameters on global (free) functions.
+The parameterised `Step<T>()` factory is therefore provided as
+`TStepFactory.Create<T>()`. The zero-parameter `Step()` free function
+remains available as a convenience alias.
 
 ### Step procedures must be `procedure of object`
 
-Steps must be methods of a class — plain procedures and class
-methods (static methods) will not work with the `TStepMethod`
-overload because they do not produce a valid `TMethod` record.
-Use the `TProc` overload with an explicit label for these cases.
+Steps must be instance methods of a class. Plain procedures and
+class (static) methods do not produce a valid `TMethod` record and
+cannot be used with the `TStepMethod` overloads. Use the `TProc`
+overload with an explicit label for these cases.
 
 ### Method visibility and RTTI
 
-As described in [RTTI and Method Visibility](#rtti-and-method-visibility):
-step procedures must be `public` or `published` for automatic name
-derivation to work, unless the `{$RTTI EXPLICIT METHODS(...)}` 
-directive is present in the test unit. Methods that cannot be found
-via RTTI produce `(unnamed step)` in the narrative report but still
-execute correctly.
+Step procedures must be `public` or `published` for automatic name
+derivation. Methods invisible to RTTI produce `(unnamed step)` in
+the narrative but still execute correctly. See
+[RTTI and Method Visibility](#rtti-and-method-visibility).
 
 ### Inherited step procedures
 
-`GetDeclaredMethods` is called on each type in the inheritance
-chain, so step procedures declared on a base fixture class are
-found correctly, provided they meet the visibility requirement
-above.
+`GetDeclaredMethods` is called on each type in the inheritance chain,
+so step procedures on a base fixture class are found correctly,
+provided they meet the visibility requirement.
 
 ### Overloaded step procedures
 
-If two methods share the same name but differ in signature, the
-code-address match will still identify the correct overload.
-However, both will produce identical narrative text (derived from
-the shared name), which may be confusing. Prefer distinct names
-for step procedures.
+If two methods share the same name but differ in signature, code-
+address matching identifies the correct overload. However, both will
+produce identical narrative text. Prefer distinct names.
 
 ### Inlined methods
 
-The Delphi compiler may inline very small methods when
-optimisation is enabled. An inlined method may not have a stable
-`CodeAddress` and will not be found by the RTTI lookup, producing
-`(unnamed step)`. Add `[NoInline]` to any step procedure that
-exhibits this behaviour, or disable inlining for the test project.
-In practice this is rarely an issue for step procedures, which
-tend to be more than a few instructions.
+The compiler may inline very small methods when optimisation is
+enabled. An inlined method may not have a stable `CodeAddress` and
+will produce `(unnamed step)`. Add `[NoInline]` to affected step
+procedures, or disable inlining for the test project.
 
 ### Multi-scenario state leakage
 
-As described in [State Management Between Scenarios](#state-management-between-scenarios),
 DUnitX only calls `[Setup]` and `[TearDown]` between `[Test]`
 methods, not between scenarios within a single `Execute` call.
-Always account for shared state when composing multi-scenario
-stories.
+See [State Management Between Scenarios](#state-management-between-scenarios).
 
-### `[TestCase]` and method names
+### `[TestCase]` and parameterised steps
 
-`[TestCase]` parameterised tests must use the anonymous method
-(`TProc`) overload for steps that depend on parameter values,
-since `TStepMethod` procedures cannot accept parameters. This
-means explicit label strings are required for those steps, as
-described in [Parameterised Scenarios](#parameterised-scenarios-with-testcase).
+`[TestCase]` parameters must use the anonymous `TProc` overload since
+`TStepMethod` procedures cannot accept parameters. Explicit labels
+are required for those steps. See
+[Parameterised Scenarios with TestCase](#parameterised-scenarios-with-testcase).
+
+### `TValue.ToString` rendering
+
+Parameter values in the narrative are rendered using `TValue.ToString`.
+For primitive types (Integer, string, Boolean, Double, enumeration)
+this produces clean readable output. For records and objects it
+produces the type name. Custom rendering is not currently supported.
 
 ### Execute must always be the last call
 
-`Execute` writes the report, raises any accumulated failures, and
-frees the entire object graph. If you forget to call `Execute`,
-no report is written, no failures are raised, the test appears
-to pass silently, and the story object leaks. Always end every
-fluent chain with `.Execute`.
+`Execute` writes the report, raises failures, and frees the object
+graph. Forgetting `.Execute` means no report is written, no failures
+are raised, the test passes silently, and the story leaks. Always
+end every fluent chain with `.Execute`.
 
 ---
 
@@ -691,7 +815,7 @@ fluent chain with `.Execute`.
 
 | Requirement    | Detail                                                                           |
 | -------------- | -------------------------------------------------------------------------------- |
-| Delphi version | 2009+ (`Rtti` unit, `procedure of object`, anonymous methods required)           |
+| Delphi version | 2009+ (`Rtti` unit, generics, anonymous methods required)                        |
 | DUnitX version | Any (uses only `Assert`, `TDUnitX.CurrentRunner.Log`, `ETestFailure`)            |
 | Platforms      | Any platform supported by DUnitX (Win32, Win64, etc.)                            |
 | FPC / Lazarus  | `{$MODE DELPHI}` guard included; RTTI behaviour under FPC may require adjustment |
