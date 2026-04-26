@@ -46,45 +46,50 @@
 
   Step naming
   -----------
-  Step procedures are declared as plain methods of the test fixture
-  class (procedure of object).  Their names may use CamelCase,
-  underscores, or a mixture; all are converted to lowercase
-  space-separated narrative text.  All-uppercase tokens (acronyms)
-  are preserved:
+  Step procedures are methods of the test fixture class.
+  Their names may use CamelCase, underscores, or a mixture:
 
       AccountIsInCredit            ->  "account is in credit"
       Account_is_in_credit         ->  "account is in credit"
       CustomerWithdrawsFromATM     ->  "customer withdraws from ATM"
       RequestWithdrawalOf20        ->  "request withdrawal of 20"
 
-  Step methods
-  ------------
-  Every step method (Given, When, Then_, AndAlso) accepts one of:
+  Step method types
+  -----------------
+  Four generic step method types are supported, covering zero to
+  four parameters.  Generic specialisation disambiguates them just
+  as method overloading does:
 
-    1. A TStepMethod (procedure of object) — the primary path.
-       The method name is extracted via RTTI by matching the code
-       address against the fixture's RTTI method table.  This gives
-       an exact, reliable name with no heuristic suffix-stripping:
+      TStepMethod                        -- no parameters
+      TStepMethod<T>                     -- one parameter
+      TStepMethod<T1,T2>                 -- two parameters
+      TStepMethod<T1,T2,T3>              -- three parameters
+      TStepMethod<T1,T2,T3,T4>           -- four parameters
 
-           .Given(AccountIsInCredit)
-           .When(CustomerRequestsAWithdrawalOf20)
-           .Then_(AccountBalanceShouldBe80)
+  Parameters are appended to the narrative in square brackets:
 
-    2. A TProc (anonymous method) with a mandatory label string.
-       RTTI extraction is bypassed; the label is used directly.
-       Use this for inline anonymous methods or parameterised steps:
+      .Given<Integer>(WithdrawAmount, 20)
+      ->  "Given withdraw amount [20]"
 
-           .Given(procedure begin FAccount.Deposit(100) end,
-                  'account starts with 100')
+      .Given<string,Integer>(NamedAccountWithBalance, 'Alice', 100)
+      ->  "Given named account with balance [Alice, 100]"
 
-    3. A pre-built TBDDStep created via the Step() factory.
-       The description is captured once at construction and stored
-       permanently, making it safe to assign to a variable and reuse:
+  Step overloads
+  --------------
+  Every step method (Given, When, Then_, AndAlso) accepts:
 
-           var S: TBDDStep;
-           S := Step(AccountIsInCredit);   // name captured here
-           ...
-           .Given(S)                       // description already stored
+    1. TStepMethod                 -- zero-parameter method reference
+    2. TStepMethod<T..>            -- parameterised method reference
+    3. TProc + mandatory label     -- anonymous method (no RTTI available)
+    4. TBDDStep                    -- pre-built self-describing step
+
+  Method visibility
+  -----------------
+  Step procedures must be public or published for RTTI name lookup
+  to work.  Private/protected steps resolve to "(unnamed step)".
+  To enable private/protected visibility add this to your test unit:
+
+    {$RTTI EXPLICIT METHODS([vcPrivate,vcProtected,vcPublic,vcPublished])}
 
   Failure behaviour
   -----------------
@@ -94,15 +99,12 @@
 
   Reporting
   ---------
-  Plain-text narrative is emitted via TDUnitX.CurrentRunner.Log,
-  which appears in all registered DUnitX loggers (console, XML, etc.)
-  and is visible in TestInsight.
+  Plain-text narrative emitted via TDUnitX.CurrentRunner.Log,
+  appearing in all registered DUnitX loggers and TestInsight.
 
   Compatibility
   -------------
-  Delphi 2009+  (requires Rtti unit, generics not required).
-  {$IFDEF FPC} guard included; RTTI behaviour under FPC/Lazarus
-  may require adjustment.
+  Delphi 2009+  (Rtti unit, generics, anonymous methods required).
 *)
 
 {$IFDEF FPC}
@@ -113,10 +115,10 @@ interface
 
 uses
   System.SysUtils,
+  System.Contnrs,
   System.Classes,
   System.Character,
   System.Rtti,
-  System.Contnrs,
   DUnitX.TestFramework;
 
 type
@@ -128,22 +130,22 @@ type
   TBDDStory    = class;
 
   // -----------------------------------------------------------------------
-  //  TStepMethod
-  //  The primary step procedure type.
-  //  Declared as "procedure of object" so that Delphi passes it as a
-  //  TMethod record (Code + Data) rather than as a managed interface.
-  //  This allows reliable RTTI name lookup by code-address matching,
-  //  and clean invocation via TMethod at run time.
+  //  TStepMethod family
+  //  Declared as "procedure [(...)] of object" so Delphi passes each as
+  //  a TMethod record (Code + Data).  Generic specialisation with
+  //  different type-parameter counts makes them distinct types, exactly
+  //  as method overloads are distinct — no numeric suffixes needed.
   // -----------------------------------------------------------------------
-  TStepMethod = procedure of object;
+  TStepMethod                              = procedure of object;
+  TStepMethod<T>                           = procedure(const A: T) of object;
+  TStepMethod<T1, T2>                      = procedure(const A: T1; const B: T2) of object;
+  TStepMethod<T1, T2, T3>                  = procedure(const A: T1; const B: T2; const C: T3) of object;
+  TStepMethod<T1, T2, T3, T4>             = procedure(const A: T1; const B: T2; const C: T3; const D: T4) of object;
 
   TStepOutcome = (soNotRun, soPassed, soFailed, soSkipped);
 
   // -----------------------------------------------------------------------
   //  TNarrativeLine
-  //  A single (label, text) pair in the story header.
-  //  Stored in insertion order so the report reflects the developer's
-  //  chosen narrative pattern exactly.
   // -----------------------------------------------------------------------
   TNarrativeLine = record
     Label_ : string;
@@ -152,31 +154,32 @@ type
 
   // -----------------------------------------------------------------------
   //  TBDDStep
-  //  A self-describing, executable step.
-  //
-  //  Internally stores either:
-  //    - A TMethod (Code + Data) for TStepMethod steps — primary path
-  //    - A TProc for anonymous method steps — secondary path
-  //  Exactly one of these will be set; the other will be nil/empty.
-  //
-  //  Construct via the module-level Step() factory or via the scenario
-  //  step methods directly.
+  //  Stores a TMethod + TValue array for invocation, and a pre-computed
+  //  description string.  Invocation uses TRttiMethod.Invoke so that
+  //  parameters are dispatched correctly regardless of count or type.
+  //  Falls back to a direct TMethod cast when RTTI cannot find the method
+  //  (e.g. private methods without the RTTI directive), ensuring the step
+  //  always executes even when the name resolves to "(unnamed step)".
+  //  For anonymous methods (TProc path), FProc is set and FMethod is nil.
   // -----------------------------------------------------------------------
   TBDDStep = class
   private
     FDescription : string;
-    FMethod      : TMethod;  // set for TStepMethod steps
-    FProc        : TProc;    // set for anonymous method steps
+    FMethod      : TMethod;
+    FParams      : TArray<TValue>;
+    FProc        : TProc;
     FKind        : string;
     FOutcome     : TStepOutcome;
     FErrorMessage: string;
   public
-    // Construct from a typed method reference (primary path)
-    constructor CreateFromMethod(const AMethod: TMethod;
-                                 const ADescription: string);
-    // Construct from an anonymous method (secondary path)
-    constructor CreateFromProc(const AProc: TProc;
-                               const ADescription: string);
+    // Primary path: TMethod + optional TValue parameters
+    constructor CreateFromMethod(const AMethod     : TMethod;
+                                 const ADescription: string;
+                                 const AParams     : TArray<TValue>); overload;
+
+    // Secondary path: anonymous method + mandatory label
+    constructor CreateFromProc(const AProc        : TProc;
+                               const ADescription : string);
 
     procedure Run;
 
@@ -198,39 +201,56 @@ type
     FHalted   : Boolean;
 
     procedure AddStep(const AKind: string; AStep: TBDDStep);
-
-    // Internal wrappers that create TBDDStep from the two source types
-    function  StepFromMethod(AMethod: TStepMethod): TBDDStep;
-    function  StepFromProc  (AProc: TProc; const ALabel: string): TBDDStep;
+    function  MakeStep(AMethod: TStepMethod): TBDDStep; overload;
+    function  MakeStep(const AMethod: TMethod;
+                       const AParams: TArray<TValue>): TBDDStep; overload;
   public
     constructor Create(AStory: TBDDStory; const ATitle: string);
     destructor  Destroy; override;
 
-    // --- Primary overloads: TStepMethod (procedure of object) ---
-    // Name is derived automatically via RTTI; no string required.
+    // --- Zero-parameter TStepMethod overloads ---
     function Given  (AMethod: TStepMethod): TBDDScenario; overload;
     function When   (AMethod: TStepMethod): TBDDScenario; overload;
     function Then_  (AMethod: TStepMethod): TBDDScenario; overload;
     function AndAlso(AMethod: TStepMethod): TBDDScenario; overload;
 
+    // --- One-parameter generic overloads ---
+    function Given  <T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario; overload;
+    function When   <T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario; overload;
+    function Then_  <T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario; overload;
+    function AndAlso<T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario; overload;
+
+    // --- Two-parameter generic overloads ---
+    function Given  <T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario; overload;
+    function When   <T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario; overload;
+    function Then_  <T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario; overload;
+    function AndAlso<T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario; overload;
+
+    // --- Three-parameter generic overloads ---
+    function Given  <T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario; overload;
+    function When   <T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario; overload;
+    function Then_  <T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario; overload;
+    function AndAlso<T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario; overload;
+
+    // --- Four-parameter generic overloads ---
+    function Given  <T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario; overload;
+    function When   <T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario; overload;
+    function Then_  <T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario; overload;
+    function AndAlso<T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario; overload;
+
     // --- Anonymous method overloads: TProc + mandatory label ---
-    // Use for inline anonymous methods or parameterised steps.
     function Given  (AProc: TProc; const ALabel: string): TBDDScenario; overload;
     function When   (AProc: TProc; const ALabel: string): TBDDScenario; overload;
     function Then_  (AProc: TProc; const ALabel: string): TBDDScenario; overload;
     function AndAlso(AProc: TProc; const ALabel: string): TBDDScenario; overload;
 
-    // --- Pre-built step overloads: TBDDStep ---
-    // Description is already stored; safe to reuse across scenarios.
+    // --- Pre-built TBDDStep overloads ---
     function Given  (AStep: TBDDStep): TBDDScenario; overload;
     function When   (AStep: TBDDStep): TBDDScenario; overload;
     function Then_  (AStep: TBDDStep): TBDDScenario; overload;
     function AndAlso(AStep: TBDDStep): TBDDScenario; overload;
 
-    // Start a new sibling scenario on the same story
     function WithScenario(const ATitle: string): TBDDScenario;
-
-    // Run all steps, emit report, free story, raise on failure
     procedure Execute;
 
     property Title : string    read FTitle;
@@ -254,16 +274,16 @@ type
     destructor  Destroy; override;
 
     // ---- BDD canonical ------------------------------------------------
-    function AsA      (const AText: string): TBDDStory;  // "As a <role>"
-    function IWantTo  (const AText: string): TBDDStory;  // "I want to <behaviour>"
-    function IWant    (const AText: string): TBDDStory;  // "I want <behaviour>"
-    function InOrderTo(const AText: string): TBDDStory;  // "In order to <benefit>"
-    function SoThat   (const AText: string): TBDDStory;  // "So that <benefit>"
+    function AsA      (const AText: string): TBDDStory;
+    function IWantTo  (const AText: string): TBDDStory;
+    function IWant    (const AText: string): TBDDStory;
+    function InOrderTo(const AText: string): TBDDStory;
+    function SoThat   (const AText: string): TBDDStory;
 
     // ---- FDD / Action-Outcome-Entity ----------------------------------
-    function Action   (const AText: string): TBDDStory;  // "Action <behaviour>"
-    function Outcome  (const AText: string): TBDDStory;  // "Outcome <result>"
-    function Entity   (const AText: string): TBDDStory;  // "Entity <object/role>"
+    function Action   (const AText: string): TBDDStory;
+    function Outcome  (const AText: string): TBDDStory;
+    function Entity   (const AText: string): TBDDStory;
 
     // ---- Escape hatch -------------------------------------------------
     function Narrative(const ALabel, AText: string): TBDDStory;
@@ -274,23 +294,74 @@ type
     property Title : string read FTitle;
   end;
 
+  // -----------------------------------------------------------------------
+  //  TStepFactory
+  //  Factory class for building pre-described TBDDStep instances.
+  //
+  //  Delphi does not permit type parameters on global (free) functions,
+  //  so parameterised Step creation is provided here as static class
+  //  methods, which Delphi's generics do support.
+  //
+  //  Zero-parameter and anonymous-method steps are also available here
+  //  for consistency, and are additionally available as the free
+  //  functions Step() and Step(TProc, string) below.
+  //
+  //  Usage:
+  //    // Zero-parameter
+  //    S := TStepFactory.Create(AccountIsInCredit);
+  //
+  //    // One-parameter
+  //    S := TStepFactory.Create<Integer>(AccountIsOpenedWithBalance, 100);
+  //
+  //    // Two-parameter
+  //    S := TStepFactory.Create<Integer,Integer>(AccountStartsWithBalanceAndLimit, 500, 1000);
+  //
+  //    // Anonymous method
+  //    S := TStepFactory.Create(procedure begin FAccount.Deposit(100) end,
+  //                             'account starts with 100');
+  // -----------------------------------------------------------------------
+  TStepFactory = class
+  private
+    class function ParamSuffix(const AParams: TArray<TValue>): string; static;
+  public
+    // Zero-parameter
+    class function Create(AMethod: TStepMethod): TBDDStep; overload; static;
+
+    // One-parameter
+    class function Create<T>(AMethod: TStepMethod<T>;
+                             const A: T): TBDDStep; overload; static;
+
+    // Two-parameter
+    class function Create<T1,T2>(AMethod: TStepMethod<T1,T2>;
+                                 const A: T1;
+                                 const B: T2): TBDDStep; overload; static;
+
+    // Three-parameter
+    class function Create<T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>;
+                                    const A: T1;
+                                    const B: T2;
+                                    const C: T3): TBDDStep; overload; static;
+
+    // Four-parameter
+    class function Create<T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>;
+                                       const A: T1;
+                                       const B: T2;
+                                       const C: T3;
+                                       const D: T4): TBDDStep; overload; static;
+
+    // Anonymous method — label is mandatory (no RTTI available)
+    class function Create(AProc: TProc;
+                          const ALabel: string): TBDDStep; overload; static;
+  end;
+
 // -----------------------------------------------------------------------
-//  Module-level helpers
+//  Module-level convenience functions
 // -----------------------------------------------------------------------
 
-{ Step factory — TStepMethod primary path.
-  Name derived from the method via RTTI; stored on the TBDDStep.
-  Use when you want to pre-build a step and assign it to a variable. }
-function Step(AMethod: TStepMethod): TBDDStep; overload;
-
-{ Step factory — TProc secondary path.
-  ALabel is required (no RTTI name extraction for anonymous methods). }
-function Step(AProc: TProc; const ALabel: string): TBDDStep; overload;
-
-{ Top-level story factory. }
+// Story factory
 function Story(const ATitle: string): TBDDStory;
 
-{ Name-conversion utilities — exposed for independent unit-testing. }
+// Name-conversion utilities (exposed for unit-testing)
 function MethodNameFromRtti(const AMethod: TMethod) : string;
 function IdentifierToWords (const AName: string)    : string;
 function CamelCaseToWords  (const AName: string)    : string;
@@ -302,20 +373,6 @@ implementation
 //  Name conversion
 // ==========================================================================
 
-{
-  CamelCaseToWords
-  ----------------
-  Splits a CamelCase / PascalCase identifier into space-separated words.
-
-  Boundary rules applied left-to-right:
-    1. Lowercase or digit -> Uppercase      "accountBalance" -> "account Balance"
-    2. Uppercase run before Upper+Lower     "ATMCard"        -> "ATM Card"
-    3. Letter <-> Digit transition          "Of20GBP"        -> "Of 20 GBP"
-
-  Post-processing:
-    All-uppercase tokens of length > 1 are treated as acronyms and
-    preserved as-is; all other tokens are lowercased.
-}
 function CamelCaseToWords(const AName: string): string;
 var
   I                           : Integer;
@@ -350,7 +407,7 @@ begin
       PrevDigit   := TCharacter.IsDigit(Prev);
       CurrDigit   := TCharacter.IsDigit(Curr);
 
-      // Rule 3: letter <-> digit boundary
+      // Letter <-> digit boundary
       if CurrDigit <> PrevDigit then
       begin
         Words.Add(Token);
@@ -358,7 +415,7 @@ begin
         Continue;
       end;
 
-      // Rule 1: lowercase/digit -> uppercase
+      // Lowercase/digit -> uppercase
       if CurrUp and (TCharacter.IsLower(Prev) or PrevDigit) then
       begin
         Words.Add(Token);
@@ -366,7 +423,7 @@ begin
         Continue;
       end;
 
-      // Rule 2: end of uppercase run before Upper+Lower (e.g. "ATM" + "Card")
+      // End of uppercase run before Upper+Lower  (e.g. "ATM" + "Card")
       if CurrUp and NextUp and AfterNextLo then
       begin
         Words.Add(Token);
@@ -383,11 +440,9 @@ begin
     for I := 0 to Words.Count - 1 do
     begin
       Token := Words[I];
-      if Result <> '' then
-        Result := Result + ' ';
-      // Preserve acronyms (all-uppercase tokens of length > 1)
+      if Result <> '' then Result := Result + ' ';
       if (Length(Token) > 1) and (Token = UpperCase(Token)) then
-        Result := Result + Token
+        Result := Result + Token        // preserve acronym
       else
         Result := Result + LowerCase(Token);
     end;
@@ -402,14 +457,6 @@ begin
   Result := StringReplace(AName, '_', ' ', [rfReplaceAll]);
 end;
 
-{
-  IdentifierToWords
-  -----------------
-  If the identifier contains underscores, splits on them first and
-  applies CamelCaseToWords to each token.  Otherwise applies
-  CamelCaseToWords directly.  Handles mixed forms such as
-  "Account_IsInCredit" naturally.
-}
 function IdentifierToWords(const AName: string): string;
 var
   Parts : TStringList;
@@ -426,7 +473,6 @@ begin
       Parts.Delimiter       := '_';
       Parts.StrictDelimiter := True;
       Parts.DelimitedText   := AName;
-
       for I := 0 to Parts.Count - 1 do
       begin
         Part := Trim(Parts[I]);
@@ -445,26 +491,9 @@ begin
 end;
 
 // ==========================================================================
-//  RTTI name extraction
+//  RTTI helpers
 // ==========================================================================
 
-{
-  MethodNameFromRtti
-  ------------------
-  Extracts the human-readable name of a step procedure using RTTI.
-
-  Because TStepMethod is "procedure of object", Delphi passes it as a
-  TMethod record containing:
-    .Data  — pointer to the object instance (the test fixture)
-    .Code  — pointer to the procedure's machine code
-
-  We obtain the fixture's RTTI type via .Data, then walk its method
-  table looking for a method whose CodeAddress matches .Code.  This is
-  an exact address match — no heuristic suffix-stripping required.
-
-  The matched method name is then passed through IdentifierToWords to
-  produce the narrative text.
-}
 function MethodNameFromRtti(const AMethod: TMethod): string;
 var
   Ctx      : TRttiContext;
@@ -473,64 +502,163 @@ var
   Instance : TObject;
 begin
   Result := '(unnamed step)';
-
-  if (AMethod.Data = nil) or (AMethod.Code = nil) then
-    Exit;
+  if (AMethod.Data = nil) or (AMethod.Code = nil) then Exit;
 
   Instance := TObject(AMethod.Data);
-
-  Ctx   := TRttiContext.Create;
-  RType := Ctx.GetType(Instance.ClassType);
+  Ctx      := TRttiContext.Create;
+  RType    := Ctx.GetType(Instance.ClassType);
 
   while Assigned(RType) do
   begin
     for RMethod in RType.GetDeclaredMethods do
-    begin
       if RMethod.CodeAddress = AMethod.Code then
       begin
         Result := IdentifierToWords(RMethod.Name);
         Exit;
       end;
-    end;
+    RType := RType.BaseType;
+  end;
+end;
 
-    // Move up to the parent class
+// Walks RTTI to find and invoke the method with the stored parameters.
+// Returns True if the method was found and invoked via RTTI.
+// Returns False if the method was not found (fallback to direct cast needed).
+function RttiInvoke(const AMethod: TMethod;
+                    const AParams: TArray<TValue>): Boolean;
+var
+  Ctx      : TRttiContext;
+  RType    : TRttiType;
+  RMethod  : TRttiMethod;
+  Instance : TObject;
+begin
+  Result := False;
+  if (AMethod.Data = nil) or (AMethod.Code = nil) then Exit;
+
+  Instance := TObject(AMethod.Data);
+  Ctx      := TRttiContext.Create;
+  RType    := Ctx.GetType(Instance.ClassType);
+
+  while Assigned(RType) do
+  begin
+    for RMethod in RType.GetDeclaredMethods do
+      if RMethod.CodeAddress = AMethod.Code then
+      begin
+        RMethod.Invoke(Instance, AParams);
+        Result := True;
+        Exit;
+      end;
     RType := RType.BaseType;
   end;
 end;
 
 // ==========================================================================
-//  Module-level factories
+//  TStepFactory
 // ==========================================================================
 
-function Step(AMethod: TStepMethod): TBDDStep;
+class function TStepFactory.ParamSuffix(const AParams: TArray<TValue>): string;
 var
-  M    : TMethod;
-  Desc : string;
+  I   : Integer;
+  Sep : string;
 begin
-  M    := TMethod(AMethod);
-  Desc := MethodNameFromRtti(M);
-  Result := TBDDStep.CreateFromMethod(M, Desc);
+  if Length(AParams) = 0 then
+  begin
+    Result := '';
+    Exit;
+  end;
+  Result := ' [';
+  Sep    := '';
+  for I := 0 to High(AParams) do
+  begin
+    Result := Result + Sep + AParams[I].ToString;
+    Sep    := ', ';
+  end;
+  Result := Result + ']';
 end;
 
-function Step(AProc: TProc; const ALabel: string): TBDDStep;
+class function TStepFactory.Create(AMethod: TStepMethod): TBDDStep;
+var
+  M: TMethod;
+begin
+  M      := TMethod(AMethod);
+  Result := TBDDStep.CreateFromMethod(M, MethodNameFromRtti(M), nil);
+end;
+
+class function TStepFactory.Create<T>(AMethod: TStepMethod<T>;
+                                      const A: T): TBDDStep;
+var
+  M : TMethod;
+  P : TArray<TValue>;
+begin
+  M      := TMethod(AMethod);
+  P      := TArray<TValue>.Create(TValue.From<T>(A));
+  Result := TBDDStep.CreateFromMethod(M,
+               MethodNameFromRtti(M) + TStepFactory.ParamSuffix(P), P);
+end;
+
+class function TStepFactory.Create<T1,T2>(AMethod: TStepMethod<T1,T2>;
+                                           const A: T1;
+                                           const B: T2): TBDDStep;
+var
+  M : TMethod;
+  P : TArray<TValue>;
+begin
+  M      := TMethod(AMethod);
+  P      := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B));
+  Result := TBDDStep.CreateFromMethod(M,
+               MethodNameFromRtti(M) + TStepFactory.ParamSuffix(P), P);
+end;
+
+class function TStepFactory.Create<T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>;
+                                              const A: T1;
+                                              const B: T2;
+                                              const C: T3): TBDDStep;
+var
+  M : TMethod;
+  P : TArray<TValue>;
+begin
+  M      := TMethod(AMethod);
+  P      := TArray<TValue>.Create(TValue.From<T1>(A),
+                                   TValue.From<T2>(B),
+                                   TValue.From<T3>(C));
+  Result := TBDDStep.CreateFromMethod(M,
+               MethodNameFromRtti(M) + TStepFactory.ParamSuffix(P), P);
+end;
+
+class function TStepFactory.Create<T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>;
+                                                  const A: T1;
+                                                  const B: T2;
+                                                  const C: T3;
+                                                  const D: T4): TBDDStep;
+var
+  M : TMethod;
+  P : TArray<TValue>;
+begin
+  M      := TMethod(AMethod);
+  P      := TArray<TValue>.Create(TValue.From<T1>(A),
+                                   TValue.From<T2>(B),
+                                   TValue.From<T3>(C),
+                                   TValue.From<T4>(D));
+  Result := TBDDStep.CreateFromMethod(M,
+               MethodNameFromRtti(M) + TStepFactory.ParamSuffix(P), P);
+end;
+
+class function TStepFactory.Create(AProc: TProc;
+                                   const ALabel: string): TBDDStep;
 begin
   Result := TBDDStep.CreateFromProc(AProc, ALabel);
-end;
-
-function Story(const ATitle: string): TBDDStory;
-begin
-  Result := TBDDStory.Create(ATitle);
 end;
 
 // ==========================================================================
 //  TBDDStep
 // ==========================================================================
 
-constructor TBDDStep.CreateFromMethod(const AMethod: TMethod;
-                                      const ADescription: string);
+constructor TBDDStep.CreateFromMethod(const AMethod     : TMethod;
+                                      const ADescription: string;
+                                      const AParams     : TArray<TValue>);
 begin
   inherited Create;
   FMethod       := AMethod;
+  FParams       := AParams;
   FProc         := nil;
   FDescription  := ADescription;
   FOutcome      := soNotRun;
@@ -538,12 +666,13 @@ begin
   FKind         := '';
 end;
 
-constructor TBDDStep.CreateFromProc(const AProc: TProc;
+constructor TBDDStep.CreateFromProc(const AProc       : TProc;
                                     const ADescription: string);
 begin
   inherited Create;
   FMethod.Data  := nil;
   FMethod.Code  := nil;
+  FParams       := nil;
   FProc         := AProc;
   FDescription  := ADescription;
   FOutcome      := soNotRun;
@@ -555,10 +684,14 @@ procedure TBDDStep.Run;
 begin
   if FOutcome = soSkipped then Exit;
   try
-    // Primary path: invoke via TMethod
     if Assigned(FMethod.Code) then
-      TStepMethod(FMethod)()
-    // Secondary path: invoke anonymous method
+    begin
+      // Primary path: invoke via RTTI so parameters are passed correctly.
+      // Falls back to a direct TMethod cast (zero-param only) when the
+      // method is not visible to RTTI (e.g. private without directive).
+      if not RttiInvoke(FMethod, FParams) then
+        TStepMethod(FMethod)();
+    end
     else if Assigned(FProc) then
       FProc;
 
@@ -573,7 +706,16 @@ begin
 end;
 
 // ==========================================================================
-//  TBDDScenario
+//  Module-level convenience functions
+// ==========================================================================
+
+function Story(const ATitle: string): TBDDStory;
+begin
+  Result := TBDDStory.Create(ATitle);
+end;
+
+// ==========================================================================
+//  TBDDScenario — internal helpers
 // ==========================================================================
 
 constructor TBDDScenario.Create(AStory: TBDDStory; const ATitle: string);
@@ -592,20 +734,20 @@ begin
   inherited;
 end;
 
-function TBDDScenario.StepFromMethod(AMethod: TStepMethod): TBDDStep;
+function TBDDScenario.MakeStep(AMethod: TStepMethod): TBDDStep;
 var
-  M    : TMethod;
-  Desc : string;
+  M: TMethod;
 begin
-  M    := TMethod(AMethod);
-  Desc := MethodNameFromRtti(M);
-  Result := TBDDStep.CreateFromMethod(M, Desc);
+  M      := TMethod(AMethod);
+  Result := TBDDStep.CreateFromMethod(M, MethodNameFromRtti(M), nil);
 end;
 
-function TBDDScenario.StepFromProc(AProc: TProc;
-                                   const ALabel: string): TBDDStep;
+function TBDDScenario.MakeStep(const AMethod: TMethod;
+                               const AParams: TArray<TValue>): TBDDStep;
 begin
-  Result := TBDDStep.CreateFromProc(AProc, ALabel);
+  Result := TBDDStep.CreateFromMethod(AMethod,
+               MethodNameFromRtti(AMethod) + TStepFactory.ParamSuffix(AParams),
+               AParams);
 end;
 
 procedure TBDDScenario.AddStep(const AKind: string; AStep: TBDDStep);
@@ -622,108 +764,196 @@ begin
   FSteps.Add(AStep);
   AStep.Run;
 
-  // Halt on failure of any Given or When (including their And continuations)
   if AStep.Outcome = soFailed then
     if (AKind = 'Given')       or (AKind = 'When') or
        (AKind = 'And (Given)') or (AKind = 'And (When)') then
       FHalted := True;
 end;
 
-// --- TStepMethod overloads ------------------------------------------------
+// ==========================================================================
+//  TBDDScenario — zero-parameter overloads
+// ==========================================================================
 
 function TBDDScenario.Given(AMethod: TStepMethod): TBDDScenario;
-begin
-  FLastKind := 'Given';
-  AddStep('Given', StepFromMethod(AMethod));
-  Result := Self;
-end;
+begin FLastKind := 'Given'; AddStep('Given', MakeStep(AMethod)); Result := Self; end;
 
 function TBDDScenario.When(AMethod: TStepMethod): TBDDScenario;
-begin
-  FLastKind := 'When';
-  AddStep('When', StepFromMethod(AMethod));
-  Result := Self;
-end;
+begin FLastKind := 'When'; AddStep('When', MakeStep(AMethod)); Result := Self; end;
 
 function TBDDScenario.Then_(AMethod: TStepMethod): TBDDScenario;
-begin
-  FLastKind := 'Then';
-  AddStep('Then', StepFromMethod(AMethod));
-  Result := Self;
-end;
+begin FLastKind := 'Then'; AddStep('Then', MakeStep(AMethod)); Result := Self; end;
 
 function TBDDScenario.AndAlso(AMethod: TStepMethod): TBDDScenario;
+begin AddStep('And (' + FLastKind + ')', MakeStep(AMethod)); Result := Self; end;
+
+// ==========================================================================
+//  TBDDScenario — one-parameter generic overloads
+// ==========================================================================
+
+function TBDDScenario.Given<T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
 begin
-  AddStep('And (' + FLastKind + ')', StepFromMethod(AMethod));
-  Result := Self;
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T>(A));
+  FLastKind := 'Given'; AddStep('Given', MakeStep(M, P)); Result := Self;
 end;
 
-// --- TProc overloads -------------------------------------------------------
+function TBDDScenario.When<T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T>(A));
+  FLastKind := 'When'; AddStep('When', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.Then_<T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T>(A));
+  FLastKind := 'Then'; AddStep('Then', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.AndAlso<T>(AMethod: TStepMethod<T>; const A: T): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T>(A));
+  AddStep('And (' + FLastKind + ')', MakeStep(M, P)); Result := Self;
+end;
+
+// ==========================================================================
+//  TBDDScenario — two-parameter generic overloads
+// ==========================================================================
+
+function TBDDScenario.Given<T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B));
+  FLastKind := 'Given'; AddStep('Given', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.When<T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B));
+  FLastKind := 'When'; AddStep('When', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.Then_<T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B));
+  FLastKind := 'Then'; AddStep('Then', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.AndAlso<T1,T2>(AMethod: TStepMethod<T1,T2>; const A: T1; const B: T2): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B));
+  AddStep('And (' + FLastKind + ')', MakeStep(M, P)); Result := Self;
+end;
+
+// ==========================================================================
+//  TBDDScenario — three-parameter generic overloads
+// ==========================================================================
+
+function TBDDScenario.Given<T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C));
+  FLastKind := 'Given'; AddStep('Given', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.When<T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C));
+  FLastKind := 'When'; AddStep('When', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.Then_<T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C));
+  FLastKind := 'Then'; AddStep('Then', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.AndAlso<T1,T2,T3>(AMethod: TStepMethod<T1,T2,T3>; const A: T1; const B: T2; const C: T3): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C));
+  AddStep('And (' + FLastKind + ')', MakeStep(M, P)); Result := Self;
+end;
+
+// ==========================================================================
+//  TBDDScenario — four-parameter generic overloads
+// ==========================================================================
+
+function TBDDScenario.Given<T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C), TValue.From<T4>(D));
+  FLastKind := 'Given'; AddStep('Given', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.When<T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C), TValue.From<T4>(D));
+  FLastKind := 'When'; AddStep('When', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.Then_<T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C), TValue.From<T4>(D));
+  FLastKind := 'Then'; AddStep('Then', MakeStep(M, P)); Result := Self;
+end;
+
+function TBDDScenario.AndAlso<T1,T2,T3,T4>(AMethod: TStepMethod<T1,T2,T3,T4>; const A: T1; const B: T2; const C: T3; const D: T4): TBDDScenario;
+var M: TMethod; P: TArray<TValue>;
+begin
+  M := TMethod(AMethod); P := TArray<TValue>.Create(TValue.From<T1>(A), TValue.From<T2>(B), TValue.From<T3>(C), TValue.From<T4>(D));
+  AddStep('And (' + FLastKind + ')', MakeStep(M, P)); Result := Self;
+end;
+
+// ==========================================================================
+//  TBDDScenario — TProc overloads
+// ==========================================================================
 
 function TBDDScenario.Given(AProc: TProc; const ALabel: string): TBDDScenario;
-begin
-  FLastKind := 'Given';
-  AddStep('Given', StepFromProc(AProc, ALabel));
-  Result := Self;
-end;
+begin FLastKind := 'Given'; AddStep('Given', TBDDStep.CreateFromProc(AProc, ALabel)); Result := Self; end;
 
 function TBDDScenario.When(AProc: TProc; const ALabel: string): TBDDScenario;
-begin
-  FLastKind := 'When';
-  AddStep('When', StepFromProc(AProc, ALabel));
-  Result := Self;
-end;
+begin FLastKind := 'When'; AddStep('When', TBDDStep.CreateFromProc(AProc, ALabel)); Result := Self; end;
 
 function TBDDScenario.Then_(AProc: TProc; const ALabel: string): TBDDScenario;
-begin
-  FLastKind := 'Then';
-  AddStep('Then', StepFromProc(AProc, ALabel));
-  Result := Self;
-end;
+begin FLastKind := 'Then'; AddStep('Then', TBDDStep.CreateFromProc(AProc, ALabel)); Result := Self; end;
 
 function TBDDScenario.AndAlso(AProc: TProc; const ALabel: string): TBDDScenario;
-begin
-  AddStep('And (' + FLastKind + ')', StepFromProc(AProc, ALabel));
-  Result := Self;
-end;
+begin AddStep('And (' + FLastKind + ')', TBDDStep.CreateFromProc(AProc, ALabel)); Result := Self; end;
 
-// --- TBDDStep overloads ----------------------------------------------------
+// ==========================================================================
+//  TBDDScenario — TBDDStep overloads
+// ==========================================================================
 
 function TBDDScenario.Given(AStep: TBDDStep): TBDDScenario;
-begin
-  FLastKind := 'Given';
-  AddStep('Given', AStep);
-  Result := Self;
-end;
+begin FLastKind := 'Given'; AddStep('Given', AStep); Result := Self; end;
 
 function TBDDScenario.When(AStep: TBDDStep): TBDDScenario;
-begin
-  FLastKind := 'When';
-  AddStep('When', AStep);
-  Result := Self;
-end;
+begin FLastKind := 'When'; AddStep('When', AStep); Result := Self; end;
 
 function TBDDScenario.Then_(AStep: TBDDStep): TBDDScenario;
-begin
-  FLastKind := 'Then';
-  AddStep('Then', AStep);
-  Result := Self;
-end;
+begin FLastKind := 'Then'; AddStep('Then', AStep); Result := Self; end;
 
 function TBDDScenario.AndAlso(AStep: TBDDStep): TBDDScenario;
-begin
-  AddStep('And (' + FLastKind + ')', AStep);
-  Result := Self;
-end;
+begin AddStep('And (' + FLastKind + ')', AStep); Result := Self; end;
 
-// --- Scenario chain --------------------------------------------------------
+// ==========================================================================
+//  TBDDScenario — chain and execute
+// ==========================================================================
 
 function TBDDScenario.WithScenario(const ATitle: string): TBDDScenario;
 begin
   Result := FStory.WithScenario(ATitle);
 end;
-
-// --- Execute ---------------------------------------------------------------
 
 procedure TBDDScenario.Execute;
 var
@@ -747,10 +977,8 @@ begin
         if S.Outcome = soFailed then
         begin
           AllPassed := False;
-          FailMsgs.Add(
-            '[' + Scenario.Title + '] ' +
-            S.Kind + ' ' + S.Description + ': ' + S.ErrorMessage
-          );
+          FailMsgs.Add('[' + Scenario.Title + '] ' +
+                       S.Kind + ' ' + S.Description + ': ' + S.ErrorMessage);
         end;
       end;
     end;
@@ -760,7 +988,7 @@ begin
 
   finally
     FailMsgs.Free;
-    FStory.Free;   // owns all scenarios (including Self) and their steps
+    FStory.Free;
   end;
 end;
 
@@ -783,8 +1011,7 @@ begin
 end;
 
 procedure TBDDStory.AddNarrative(const ALabel, AText: string);
-var
-  Idx: Integer;
+var Idx: Integer;
 begin
   Idx := Length(FNarrative);
   SetLength(FNarrative, Idx + 1);
@@ -792,51 +1019,23 @@ begin
   FNarrative[Idx].Text   := AText;
 end;
 
-// ---- BDD canonical -------------------------------------------------------
-
-function TBDDStory.AsA(const AText: string): TBDDStory;
-begin AddNarrative('As a', AText);       Result := Self; end;
-
-function TBDDStory.IWantTo(const AText: string): TBDDStory;
-begin AddNarrative('I want to', AText);  Result := Self; end;
-
-function TBDDStory.IWant(const AText: string): TBDDStory;
-begin AddNarrative('I want', AText);     Result := Self; end;
-
-function TBDDStory.InOrderTo(const AText: string): TBDDStory;
-begin AddNarrative('In order to', AText); Result := Self; end;
-
-function TBDDStory.SoThat(const AText: string): TBDDStory;
-begin AddNarrative('So that', AText);    Result := Self; end;
-
-// ---- FDD / Action-Outcome-Entity -----------------------------------------
-
-function TBDDStory.Action(const AText: string): TBDDStory;
-begin AddNarrative('Action', AText);     Result := Self; end;
-
-function TBDDStory.Outcome(const AText: string): TBDDStory;
-begin AddNarrative('Outcome', AText);    Result := Self; end;
-
-function TBDDStory.Entity(const AText: string): TBDDStory;
-begin AddNarrative('Entity', AText);     Result := Self; end;
-
-// ---- Escape hatch --------------------------------------------------------
-
-function TBDDStory.Narrative(const ALabel, AText: string): TBDDStory;
-begin AddNarrative(ALabel, AText);       Result := Self; end;
-
-// ---- Scenario chain ------------------------------------------------------
+function TBDDStory.AsA      (const AText: string): TBDDStory; begin AddNarrative('As a',       AText); Result := Self; end;
+function TBDDStory.IWantTo  (const AText: string): TBDDStory; begin AddNarrative('I want to',  AText); Result := Self; end;
+function TBDDStory.IWant    (const AText: string): TBDDStory; begin AddNarrative('I want',     AText); Result := Self; end;
+function TBDDStory.InOrderTo(const AText: string): TBDDStory; begin AddNarrative('In order to',AText); Result := Self; end;
+function TBDDStory.SoThat   (const AText: string): TBDDStory; begin AddNarrative('So that',    AText); Result := Self; end;
+function TBDDStory.Action   (const AText: string): TBDDStory; begin AddNarrative('Action',     AText); Result := Self; end;
+function TBDDStory.Outcome  (const AText: string): TBDDStory; begin AddNarrative('Outcome',    AText); Result := Self; end;
+function TBDDStory.Entity   (const AText: string): TBDDStory; begin AddNarrative('Entity',     AText); Result := Self; end;
+function TBDDStory.Narrative(const ALabel, AText: string): TBDDStory; begin AddNarrative(ALabel, AText); Result := Self; end;
 
 function TBDDStory.WithScenario(const ATitle: string): TBDDScenario;
-var
-  Scenario: TBDDScenario;
+var Scenario: TBDDScenario;
 begin
   Scenario := TBDDScenario.Create(Self, ATitle);
   FScenarios.Add(Scenario);
   Result := Scenario;
 end;
-
-// ---- Reporting -----------------------------------------------------------
 
 function TBDDStory.OutcomeTag(AOutcome: TStepOutcome): string;
 begin
@@ -877,13 +1076,9 @@ begin
       begin
         S    := TBDDStep(Scenario.FSteps[J]);
         Line := '    ' + S.Kind + ' ' + S.Description;
-
-        while Length(Line) < COL_WIDTH do
-          Line := Line + ' ';
-
+        while Length(Line) < COL_WIDTH do Line := Line + ' ';
         Line := Line + OutcomeTag(S.Outcome);
         Lines.Add(Line);
-
         if S.Outcome = soFailed then
           Lines.Add('      *** ' + S.ErrorMessage);
       end;
