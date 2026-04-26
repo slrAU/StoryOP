@@ -14,7 +14,7 @@ Comprehensive documentation can be found in the StoryOP.Manual.md file.  I may g
 
 For those of you that are already familiar with StoryQ and just want to jump right in,
 
-1. Add `StoryOP.pas` to your test project, or add it's location to the search path.
+1. Add `StoryOP.pas` to your test project, or add it's location to your test project's search path.
 
 2. Add `StoryOP` to the `uses` clause of your test unit.
 
@@ -24,4 +24,4 @@ For those of you that are already familiar with StoryQ and just want to jump rig
 4. Compose stories inside ordinary `[Test]` methods using the
    fluent chain, ending every chain with `.Execute`.
 
-5. See the use-case examples in `StoryOP.BankAccount.Tests.pas` unit if you want to see how this all works... but seriously, flick through the manual if you want to know more, or send me a .
+5. See the use-case examples in `StoryOP.BankAccount.Tests.pas` unit if you want to see how this all works... but seriously, flick through the manual if you want to know more, or send me a message via the discussions page.
