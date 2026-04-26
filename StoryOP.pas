@@ -378,7 +378,7 @@ var
   I                           : Integer;
   Len                         : Integer;
   Words                       : TStringList;
-  Token                       : string;
+  Token, SubToken             : string;
   Prev, Curr, Next, AfterNext : Char;
   CurrUp, NextUp, AfterNextLo : Boolean;
   PrevDigit, CurrDigit        : Boolean;
@@ -418,17 +418,44 @@ begin
       // Lowercase/digit -> uppercase
       if CurrUp and (TCharacter.IsLower(Prev) or PrevDigit) then
       begin
-        Words.Add(Token);
+        if Length(Token) > 3 then
+        begin
+          SubToken := Token.Substring(0, 3);
+
+          if SubToken = Uppercase(SubToken) then
+          begin
+            Words.Add(Token.Substring(0, 3));
+            Words.Add(Lowercase(Token.Substring(3)));
+          end
+          else
+          begin
+            Words.Add(Token);
+          end;
+        end
+        else
+        begin
+          Words.Add(Token);
+        end;
         Token := Curr;
         Continue;
       end;
 
       // End of uppercase run before Upper+Lower  (e.g. "ATM" + "Card")
-      if CurrUp and NextUp and AfterNextLo then
+      if (CurrUp and not NextUp and AfterNextLo) then
       begin
-        Words.Add(Token);
+        if Length(Token) > 3 then
+        begin
+          Words.Add(Token.Substring(0, 3));
+          Words.Add(Token.Substring(3));
+        end
+        else
+        begin
+          Words.Add(Token);
+        end;
+
         Token := Curr;
         Continue;
+
       end;
 
       Token := Token + Curr;

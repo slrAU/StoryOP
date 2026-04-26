@@ -42,8 +42,6 @@ begin
   TDUnitX.Run;
 {$ELSE}
   try
-//    TDUnitX.RegisterTestFixture(TBankAccountTests);
-
     Runner := TDUnitX.CreateRunner;
     Runner.UseRTTI := True;
 
