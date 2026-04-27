@@ -1,5 +1,12 @@
 # StoryOP
 
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![GitHub release](https://img.shields.io/github/v/release/slrAU/StoryOP)
+![Downloads](https://img.shields.io/github/downloads/slrAU/StoryOP/total)
+![Issues](https://img.shields.io/github/issues/slrAU/StoryOP)
+![Discussions](https://img.shields.io/github/discussions/slrAU/StoryOP)
+![Stars](https://img.shields.io/github/stars/slrAU/StoryOP)
+
 ## TL;DR
 
 Presently, the requirements for usage are Delphi XE4 or greater and should support any version of DUnitX.
