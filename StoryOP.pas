@@ -395,16 +395,11 @@ begin
       Prev := AName[I - 1];
       Curr := AName[I];
 
-
-      CurrUp      := TCharacter.IsUpper(Curr);
-      NextUp      := (Next <> #0) and TCharacter.IsUpper(Next);
-      AfterNextLo := (AfterNext <> #0) and TCharacter.IsLower(AfterNext);
-      PrevDigit   := TCharacter.IsDigit(Prev);
-      CurrDigit   := TCharacter.IsDigit(Curr);
       Next := #0;
+      if I < Len then Next := AName[I + 1];
 
-      // Letter <-> digit boundary
-      if CurrDigit <> PrevDigit then
+      // Rule 1: letter <-> digit boundary
+      if Curr.IsDigit <> Prev.IsDigit then
       begin
         Words.Add(Token);
         Token := Curr;
