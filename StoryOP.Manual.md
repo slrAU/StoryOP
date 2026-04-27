@@ -815,7 +815,7 @@ end every fluent chain with `.Execute`.
 
 | Requirement    | Detail                                                                           |
 | -------------- | -------------------------------------------------------------------------------- |
-| Delphi version | 2009+ (`Rtti` unit, generics, anonymous methods required)                        |
+| Delphi version | XE4+ (`Rtti` unit, generics, anonymous methods required)                         |
 | DUnitX version | Any (uses only `Assert`, `TDUnitX.CurrentRunner.Log`, `ETestFailure`)            |
 | Platforms      | Any platform supported by DUnitX (Win32, Win64, etc.)                            |
 | FPC / Lazarus  | `{$MODE DELPHI}` guard included; RTTI behaviour under FPC may require adjustment |

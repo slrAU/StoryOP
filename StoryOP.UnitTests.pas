@@ -453,7 +453,9 @@ end;
 
 procedure TNameConversionTests.CamelCase_ConsecutiveAcronyms;
 begin
-  Assert.AreEqual('ATM PIN code', CamelCaseToWords('ATMPINCode'));
+  Assert.AreNotEqual('ATM PIN code', CamelCaseToWords('ATM_PINCode'), 'CamelCase Parser should not manage underscores');
+  Assert.AreNotEqual('ATM PIN code', CamelCaseToWords('ATMPINCode'), 'CamelCase Parser should not manage concatenated acronyms');
+  Assert.AreEqual('ATM PIN code', IdentifierToWords('ATM_PINCode'));
 end;
 
 procedure TNameConversionTests.CamelCase_SingleChar;

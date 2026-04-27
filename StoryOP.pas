@@ -115,8 +115,8 @@ interface
 
 uses
   System.SysUtils,
-  System.Contnrs,
   System.Classes,
+  System.Contnrs,
   System.Character,
   System.Rtti,
   DUnitX.TestFramework;
@@ -365,7 +365,6 @@ function Story(const ATitle: string): TBDDStory;
 function MethodNameFromRtti(const AMethod: TMethod) : string;
 function IdentifierToWords (const AName: string)    : string;
 function CamelCaseToWords  (const AName: string)    : string;
-function UnderscoreToWords (const AName: string)    : string;
 
 implementation
 
@@ -375,13 +374,13 @@ implementation
 
 function CamelCaseToWords(const AName: string): string;
 var
-  I                           : Integer;
-  Len                         : Integer;
-  Words                       : TStringList;
-  Token, SubToken             : string;
-  Prev, Curr, Next, AfterNext : Char;
-  CurrUp, NextUp, AfterNextLo : Boolean;
-  PrevDigit, CurrDigit        : Boolean;
+  I            : Integer;
+  Len          : Integer;
+  Words        : TStringList;
+  Token        : string;
+  Prev, Curr   : Char;
+  Next         : Char;
+  TokenIsUpper : Boolean;
 begin
   Result := '';
   Len    := Length(AName);
@@ -396,16 +395,13 @@ begin
       Prev := AName[I - 1];
       Curr := AName[I];
 
-      Next      := #0;
-      AfterNext := #0;
-      if I < Len     then Next      := AName[I + 1];
-      if I < Len - 1 then AfterNext := AName[I + 2];
 
       CurrUp      := TCharacter.IsUpper(Curr);
       NextUp      := (Next <> #0) and TCharacter.IsUpper(Next);
       AfterNextLo := (AfterNext <> #0) and TCharacter.IsLower(AfterNext);
       PrevDigit   := TCharacter.IsDigit(Prev);
       CurrDigit   := TCharacter.IsDigit(Curr);
+      Next := #0;
 
       // Letter <-> digit boundary
       if CurrDigit <> PrevDigit then
@@ -415,47 +411,30 @@ begin
         Continue;
       end;
 
-      // Lowercase/digit -> uppercase
-      if CurrUp and (TCharacter.IsLower(Prev) or PrevDigit) then
+      // Rule 2: lowercase or digit followed by uppercase — new word begins
+      if Curr.IsUpper and (Prev.IsLower or Prev.IsDigit or Prev.IsWhiteSpace) then
       begin
-        if Length(Token) > 3 then
-        begin
-          SubToken := Token.Substring(0, 3);
-
-          if SubToken = Uppercase(SubToken) then
-          begin
-            Words.Add(Token.Substring(0, 3));
-            Words.Add(Lowercase(Token.Substring(3)));
-          end
-          else
-          begin
-            Words.Add(Token);
-          end;
-        end
-        else
-        begin
-          Words.Add(Token);
-        end;
+        Words.Add(Token);
         Token := Curr;
         Continue;
       end;
 
-      // End of uppercase run before Upper+Lower  (e.g. "ATM" + "Card")
-      if (CurrUp and not NextUp and AfterNextLo) then
+      // Rule 3: acronym boundary — Curr is uppercase, Next is lowercase,
+      // and the token accumulated so far is entirely uppercase (length > 1).
+      // This means Curr is the first letter of a new word, not part of
+      // the acronym.  Split before Curr regardless of acronym length.
+      //
+      //   "ATMCard":    at 'C', Token='ATM' (all-upper), Next='a' -> split
+      //   "HTTPSProxy": at 'P', Token='HTTPS' (all-upper), Next='r' -> split
+      //   "NATOForces": at 'F', Token='NATO' (all-upper), Next='o' -> split
+      //
+      // Note: ATMPIN will not split. In multiple acronym situations use an underscore instead, e.g.:  ATM_PIN
+      TokenIsUpper := (Length(Token) > 1) and (Token = UpperCase(Token));
+      if Curr.IsUpper and Next.IsLower and TokenIsUpper then
       begin
-        if Length(Token) > 3 then
-        begin
-          Words.Add(Token.Substring(0, 3));
-          Words.Add(Token.Substring(3));
-        end
-        else
-        begin
-          Words.Add(Token);
-        end;
-
+        Words.Add(Token);
         Token := Curr;
         Continue;
-
       end;
 
       Token := Token + Curr;
@@ -464,12 +443,13 @@ begin
     if Token <> '' then
       Words.Add(Token);
 
+    // Reassemble: preserve all-uppercase tokens (acronyms), lowercase rest
     for I := 0 to Words.Count - 1 do
     begin
       Token := Words[I];
       if Result <> '' then Result := Result + ' ';
       if (Length(Token) > 1) and (Token = UpperCase(Token)) then
-        Result := Result + Token        // preserve acronym
+        Result := Result + Token
       else
         Result := Result + LowerCase(Token);
     end;
@@ -479,41 +459,22 @@ begin
   end;
 end;
 
-function UnderscoreToWords(const AName: string): string;
-begin
-  Result := StringReplace(AName, '_', ' ', [rfReplaceAll]);
-end;
-
 function IdentifierToWords(const AName: string): string;
 var
-  Parts : TStringList;
-  I     : Integer;
-  Part  : string;
+  HasDoubleUnderscore : Boolean;
 begin
-  Result := '';
   if AName = '' then Exit;
 
-  if Pos('_', AName) > 0 then
+  Result := AName;
+  HasDoubleUnderscore := Result.Contains('__');
+  while HasDoubleUnderscore do
   begin
-    Parts := TStringList.Create;
-    try
-      Parts.Delimiter       := '_';
-      Parts.StrictDelimiter := True;
-      Parts.DelimitedText   := AName;
-      for I := 0 to Parts.Count - 1 do
-      begin
-        Part := Trim(Parts[I]);
-        if Part = '' then Continue;
-        if Result <> '' then Result := Result + ' ';
-        Result := Result + CamelCaseToWords(Part);
-      end;
-    finally
-      Parts.Free;
-    end;
-  end
-  else
-    Result := CamelCaseToWords(AName);
-
+    Result := StringReplace(Result, '__', '_', [rfReplaceAll]);
+    HasDoubleUnderscore := Result.Contains('__');
+  end;
+  Result := StringReplace(Result, '_', ' ', [rfReplaceAll]);
+  Result := CamelCaseToWords(Result);
+  Result := StringReplace(Result, '  ', ' ', [rfReplaceAll]);
   Result := Trim(Result);
 end;
 

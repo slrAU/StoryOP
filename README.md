@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-Presently, the requirements for usage are Delphi 2009 or greater and should support any version of DUnitX.
+Presently, the requirements for usage are Delphi XE4 or greater and should support any version of DUnitX.
 
 Comprehensive documentation can be found in the StoryOP.Manual.md file. I may get around to throwing it into the project wiki at some point.
 

@@ -49,16 +49,6 @@ begin
     Logger := TDUnitXConsoleLogger.Create(True);
     Runner.AddLogger(Logger);
 
-    // NUnit-compatible XML log — useful for CI pipelines
-    XMLLogger := TDUnitXXmlNUnitLogger.Create(
-      TFileStream.Create(
-        TPath.Combine(TPath.GetDirectoryName(ParamStr(0)),
-                    'StoryOP.Tests.Results.xml'),
-                    fmCreate or fmShareDenyWrite
-                    )
-    );
-    Runner.AddLogger(XMLLogger);
-
     Runner.FailsOnNoAsserts := False;
 
     Results := Runner.Execute;
